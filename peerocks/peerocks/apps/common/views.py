@@ -1,5 +1,9 @@
+import functools
 import json
+import time
+from itertools import chain
 
+from django.db import reset_queries, connection
 from django.shortcuts import (
     render,
 )
@@ -7,18 +11,43 @@ from django.views import (
     View,
 )
 
+from products.models import Product
+from recipes.models import Recipe, UserRecipe, RecipeProduct, CookStep
+
+
+
+def query_debugger(func):
+    @functools.wraps(func)
+    def inner_func(*args, **kwargs):
+        reset_queries()
+
+        start_queries = len(connection.queries)
+
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        end = time.perf_counter()
+
+        end_queries = len(connection.queries)
+
+        print(f"Function : {func.__name__}")
+        print(f"Number of Queries : {end_queries - start_queries}")
+        print(f"Finished in : {(end - start):.2f}s")
+        return result
+
+    return inner_func
+
+
 
 class Task1View(View):
     """
     Вывести список всех рецептов. Список должен содержать информацию о самом рецепте, авторе
     """
 
+    @query_debugger
     def get(self, request, **kwargs):
-        data = {
-            'response': 'some data task 1',
-        }
+        a = list(Recipe.objects.values_list('description', 'title', 'userrecipe__user'))
 
-        return render(request, 'task.html', {'json_data': json.dumps(data)})
+        return render(request, 'task.html', {'json_data': a})
 
 
 class Task2View(View):
@@ -27,12 +56,32 @@ class Task2View(View):
     необходимых продоктов для приготовления
     """
 
+    @query_debugger
     def get(self, request, **kwargs):
-        data = {
-            'response': 'some data task 2',
-        }
 
-        return render(request, 'task.html', {'json_data': json.dumps(data)})
+        recipes = Recipe.objects.values_list('title', flat=True)
+        recipe_info = dict()
+        product_info = Product.objects.values('title', 'recipeproduct__recipe__title')
+        cooksteps_info = CookStep.objects.values('title', 'description', 'recipe__title')
+
+        for recipe in recipes:
+            recipe_title = recipe.title
+            recipe_info[recipe.title] = {
+                "описание рецепта": Recipe.objects.values_list('description', flat=True).filter(title=recipe)}
+
+            recipe_info[recipe.title]["продукт"] = []
+            recipe_info[recipe.title]["этап"] = []
+
+            products = product_info.filter(recipeproduct__recipe__title=recipe_title)
+            for item in products:
+                recipe_info[recipe.title]["продукт"].append(item.title)
+
+            cooksteps = cooksteps_info.filter(recipe__title=recipe_title)
+            for item in cooksteps:
+                recipe_info[recipe.title]["этап"].update({item['title']: item['description']})
+
+
+        return render(request, 'task.html', {'json_data': recipe_info})
 
 
 class Task3View(View):
@@ -75,6 +124,7 @@ class Task5View(View):
         }
 
         return render(request, 'task.html', {'json_data': json.dumps(data)})
+
 
 
 
